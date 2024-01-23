@@ -1,21 +1,100 @@
-import { useCallback } from "react";
+import { useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import ReactFlow, {
-  addEdge,
   Background,
   useNodesState,
   useEdgesState,
   MiniMap,
   Controls,
-  type OnConnect,
   type Node,
 } from "reactflow";
 
 import "reactflow/dist/style.css";
 
 import Editor from "@monaco-editor/react";
+import traverse, { type NodePath, type Visitor } from "@babel/traverse";
+
+import { parse } from "./transformation";
 
 export const App = () => {
+  const [nodes, setNodes] = useNodesState(initialNodes);
+  const [edges, setEdges] = useEdgesState(initialEdges);
+
+  const hadleParse = () => {
+    const result = parse(codeValue);
+
+    // convert that result to a tree that React flow can use for sub layout
+
+    const newNodes: Node[] = [];
+    const newEdges = [];
+
+    const rootId = "root";
+
+    // store nodes by ID for ref later
+    const nodeMap = new Map<string, Node>();
+
+    const visitor: Visitor = {
+      enter(path: NodePath) {
+        const node = path.node;
+
+        const id = path.node.start + "-" + path.node.end;
+
+        console.log(node, path, id);
+
+        // use the node loc line to set the y position
+
+        const newNode = {
+          id,
+          data: { label: node.type },
+          position: {
+            x: node.loc?.start.column * 10,
+            y: node.loc?.start.line * 50,
+          },
+          className: "light",
+          style: {
+            backgroundColor: "rgba(255, 0, 0, 0.2)",
+            width: 200,
+            height: 200,
+          },
+        };
+
+        newNodes.push(newNode);
+
+        nodeMap.set(id, newNode);
+
+        if (path.parentPath) {
+          const parentId =
+            path.parentPath?.node.start + "-" + path.parentPath?.node.end;
+
+          // get the parent and set the extent
+          const parent = nodeMap.get(parentId);
+          if (parent) {
+            parent.type = "group";
+          }
+
+          newNode.parentNode = parentId;
+
+          newEdges.push({
+            id: parentId + "-" + id,
+            source: parentId,
+            target: id,
+          });
+        }
+      },
+    };
+
+    traverse(result, visitor);
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+
+    console.log("new nodes", newNodes);
+
+    console.log(result);
+  };
+
+  const [codeValue, setCodeValue] = useState<string>("");
+
   return (
     <div className="min-h-[100vh] h-1 flex flex-col">
       <h2>TS AST Viewer</h2>
@@ -23,15 +102,19 @@ export const App = () => {
       <div className="flex-1 h-1">
         <PanelGroup direction="horizontal" className="h-full">
           <Panel defaultSize={30} minSize={20}>
-            <Editor
-              height="100%"
-              defaultLanguage="typescript"
-              defaultValue="// some comment"
-            />
+            <div className="h-full flex flex-col">
+              <Editor
+                className="flex-1"
+                defaultLanguage="typescript"
+                value={codeValue}
+                onChange={(value) => setCodeValue(value ?? "")}
+              />
+              <button onClick={hadleParse}>Parse</button>
+            </div>
           </Panel>
           <PanelResizeHandle className="w-2 bg-blue-800" />
           <Panel minSize={30}>
-            <NestedFlow />
+            <NestedFlow nodes={nodes} edges={edges} />
           </Panel>
         </PanelGroup>
       </div>
@@ -120,23 +203,29 @@ const initialEdges = [
   { id: "e4b1-4b2", source: "4b1", target: "4b2" },
 ];
 
-const NestedFlow = () => {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+const NestedFlow = ({ nodes, edges }: { nodes?: Node[]; edges?: any[] }) => {
+  const [lnodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [ledges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  const onConnect: OnConnect = useCallback((connection) => {
-    setEdges((eds) => addEdge(connection, eds));
-  }, []);
+  useEffect(() => {
+    if (nodes) {
+      setNodes(nodes);
+    }
+  }, [nodes, setNodes]);
+
+  useEffect(() => {
+    if (edges) {
+      setEdges(edges);
+    }
+  }, [edges, setEdges]);
 
   return (
     <ReactFlow
-      nodes={nodes}
-      edges={edges}
+      nodes={lnodes}
+      edges={ledges}
+      fitView
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
-      onConnect={onConnect}
-      className="react-flow-subflows-example"
-      fitView
     >
       <MiniMap />
       <Controls />
